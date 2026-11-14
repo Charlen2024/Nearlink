@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <UseWinUI>true</UseWinUI>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Nearlink</AssemblyName>
+    <AssemblyTitle>Nearlink</AssemblyTitle>
+    <RootNamespace>Nearlink.Native</RootNamespace>
+    <Company>Chao</Company>
+    <Authors>Chao</Authors>
+    <Product>Nearlink</Product>
+    <Description>Nearlink — Local device messaging and file transfer</Description>
+    <Copyright>Copyright © 2026 Chao</Copyright>
+    <Version>1.0.0</Version>
+    <FileVersion>1.0.0.0</FileVersion>
+    <InformationalVersion>1.0.0</InformationalVersion>
+    <ApplicationIcon>Assets\nearlink.ico</ApplicationIcon>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <PublishSingleFile>true</PublishSingleFile>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+    <EnableDefaultPageItems>false</EnableDefaultPageItems>
+    <DefaultItemExcludes>$(DefaultItemExcludes);bin\**;obj\**;publish\**;publish-*\**;release*\**;Nearlink-native-win-x64\**;winui\bin\**;winui\obj\**;legacy-wpf\**;Assets\**;*.zip</DefaultItemExcludes>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.6.5" />
+    <PackageReference Include="QRCoder" Version="1.6.0" />
+    <ApplicationDefinition Include="winui\App.xaml" />
+    <Page Include="winui\MainWindow.xaml" />
+    <Compile Include="winui\App.xaml.cs" />
+    <Compile Include="winui\MainWindow.xaml.cs" />
+    <Compile Include="TransferHost.cs" />
+    <Compile Include="TransferStore.cs" />
+    <Compile Include="ReliableTransfer.cs" />
+    <Compile Include="DesktopSyncClient.cs" />
+    <Compile Include="LanDiscoveryService.cs" />
+    <Compile Include="RemoteDesktopSession.cs" />
+    <EmbeddedResource Include="Assets\nearlink.ico" LogicalName="Nearlink.Native.Assets.nearlink.ico" />
+    <EmbeddedResource Include="Assets\nearlink-about.png" LogicalName="Nearlink.Native.Assets.nearlink-about.png" />
+    <None Remove="Assets\nearlink.ico;Assets\nearlink-icon-source.png" />
+    <EmbeddedResource Include="wwwroot\**\*" LogicalName="Nearlink.Native.wwwroot.%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

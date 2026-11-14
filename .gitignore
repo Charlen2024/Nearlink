@@ -1,0 +1,22 @@
+# Build outputs and local configuration
+**/bin/
+**/obj/
+**/build/
+**/publish*/
+**/release*/
+**/Nearlink-native-win-x64/
+**/.gradle/
+**/.kotlin/
+**/node_modules/
+**/local.properties
+*.apk
+*.aab
+*.exe
+*.pdb
+*.zip
+*.jks
+*.keystore
+*.user
+*.suo
+.DS_Store
+Thumbs.db
