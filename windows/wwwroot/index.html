@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><meta name="theme-color" content="#f5f6f8"><title>Nearlink · 设备互传</title><link rel="stylesheet" href="/style.css"></head>
+<body><main class="shell">
+  <header class="topbar"><a class="brand" href="#"><span class="brand-icon">↗</span><span>nearlink</span></a><div class="top-status"><i id="dot"></i><span id="connection">正在连接</span></div></header>
+  <section class="layout">
+    <aside class="sidebar">
+      <div class="intro"><div class="eyebrow">PRIVATE · LOCAL NETWORK</div><h1>发送到这台<br>电脑。</h1><p>扫码已选定接收电脑。发送消息或文件后，电脑会先确认，再开始接收。</p></div>
+      <div class="pair-card"><div class="pair-head"><span class="pair-icon">▦</span><div><b>添加设备</b><small>扫码或复制链接，可连接多台</small></div></div><img id="qr" alt="扫描二维码添加设备"/><div class="pair-code"><span>配对码</span><b id="pair-code">········</b></div><div class="pair-link"><span id="pair-url">正在获取连接地址…</span><button id="copy-link" type="button">复制</button></div></div>
+      <div class="privacy"><span>⌑</span><p><b>你的数据只在本地流转</b><br>无需注册，不经过云端服务器。</p></div>
+      <div class="sidebar-foot">NEARLINK <span>·</span> LOCAL FIRST</div>
+    </aside>
+    <section class="chat-panel"><div class="chat-head"><div class="chat-toolbar"><div class="devices"><div class="device-icon">▣</div><div><b>发送到这台电脑</b><small id="peer-label">正在确认电脑在线状态…</small></div></div><div class="chat-actions"><button id="rename-device" class="rename-device" type="button">本机名称</button><div class="live"><i></i>接收前确认</div></div></div><div id="peer-list" class="peer-list" aria-label="接收电脑"></div></div>
+      <div class="feed" id="feed"><div class="welcome"><div class="welcome-orbit">↗</div><h2>准备发送</h2><p>选择文件或写下消息。电脑确认接收后，内容会通过局域网直接传过去。</p><div class="welcome-tags"><span>电脑确认接收</span><span>局域网直连</span></div></div></div>
+      <div class="composer"><div id="file-preview" class="file-preview hidden"></div><div class="compose-row"><label class="attach" title="发送文件">＋<input id="file" type="file" multiple hidden></label><textarea id="message" rows="1" placeholder="发消息给这台电脑…" maxlength="4000"></textarea><button id="send" class="send" aria-label="发送">↑</button></div><div class="compose-hint"><span>Enter 发送 <em>·</em> Shift + Enter 换行</span><span>单个文件最大 1 GB</span></div></div>
+    </section>
+  </section>
+</main><script src="/app.js"></script></body></html>
