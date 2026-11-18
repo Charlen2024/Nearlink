@@ -110,6 +110,7 @@ jobs:
           DEPLOY_USER: ${{ secrets.NEARLINK_SERVER_USER }}
           DEPLOY_KEY: ${{ secrets.NEARLINK_SERVER_SSH_KEY }}
           DEPLOY_KNOWN_HOSTS: ${{ secrets.NEARLINK_SERVER_KNOWN_HOSTS }}
+          TAG: ${{ github.ref_name }}
         run: |
           test -n "$DEPLOY_HOST" && test -n "$DEPLOY_USER" && test -n "$DEPLOY_KEY" && test -n "$DEPLOY_KNOWN_HOSTS" || { echo "Missing server deployment secrets"; exit 1; }
           install -m 700 -d ~/.ssh
@@ -118,6 +119,15 @@ jobs:
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
           TARGET="$DEPLOY_USER@$DEPLOY_HOST"
           REMOTE_TMP="/tmp/nearlink-release"
+          RELEASE_URL="https://github.com/Charlen2024/Nearlink/releases/download/$TAG"
           ssh -i ~/.ssh/nearlink_deploy "$TARGET" "rm -rf '$REMOTE_TMP' && mkdir -m 700 '$REMOTE_TMP'"
-          scp -i ~/.ssh/nearlink_deploy artifacts/Nearlink-Windows-x64.zip artifacts/Nearlink-Android.apk windows.json android.json "$TARGET:$REMOTE_TMP/"
-          ssh -i ~/.ssh/nearlink_deploy "$TARGET" "sudo -n /usr/local/sbin/nearlink-install-release && rm -rf '$REMOTE_TMP'"
+          scp -i ~/.ssh/nearlink_deploy windows.json android.json "$TARGET:$REMOTE_TMP/"
+          ssh -i ~/.ssh/nearlink_deploy "$TARGET" bash -s -- "$REMOTE_TMP" "$RELEASE_URL" <<'REMOTE_SCRIPT'
+          set -euo pipefail
+          staging_dir="$1"
+          release_url="$2"
+          curl --fail --location --retry 3 --retry-all-errors --connect-timeout 15 "$release_url/Nearlink-Windows-x64.zip" --output "$staging_dir/Nearlink-Windows-x64.zip"
+          curl --fail --location --retry 3 --retry-all-errors --connect-timeout 15 "$release_url/Nearlink-Android.apk" --output "$staging_dir/Nearlink-Android.apk"
+          sudo -n /usr/local/sbin/nearlink-install-release
+          rm -rf "$staging_dir"
+          REMOTE_SCRIPT
