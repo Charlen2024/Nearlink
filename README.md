@@ -15,6 +15,7 @@ Nearlink is a local-network messaging and file-transfer app for Windows and Andr
 
 - `windows/` — C# / WinUI 3 desktop app, LAN host, paired desktop client, reliable transfer module, and durable transfer store.
 - `android/` — Kotlin / Material Android client and the matching resumable Android-to-Windows upload adapter.
+- `site/` — Responsive product website and a Go HTTP service with health/readiness endpoints, embedded static assets, and a systemd deployment unit.
 
 ## Build
 
@@ -36,6 +37,30 @@ cd android
 ```
 
 The debug APK is written to `android/app/build/outputs/apk/debug/app-debug.apk`.
+
+### Website and Go service
+
+Requirements: Go 1.23 or later.
+
+```powershell
+cd site
+go run .
+```
+
+The site is available at `http://127.0.0.1:8080`. The service exposes `/healthz`, `/readyz`, and `/api/v1/site`. See [`site/DEPLOY.md`](site/DEPLOY.md) for Linux deployment and the current single-instance availability boundary.
+
+## Client updates
+
+Windows and Android check `https://charlen.top/api/v1/releases/{platform}` when the app starts/resumes and every 15 minutes while active. The manifest includes a version, notes, SHA-256, and a server-side download URL. Windows downloads and verifies the ZIP, then a small PowerShell helper replaces `Nearlink.exe` after the app exits and restarts it. Android downloads and verifies the APK, then hands it to Android's package installer; Android still requires the user to approve installation.
+
+Pushing a tag like `v1.2.0` runs [the GitHub Actions release workflow](.github/workflows/release.yml): it builds both clients, creates a GitHub Release, and installs the APK, Windows ZIP, and manifests into `/var/lib/nearlink-site/releases` on the website server. Configure these repository Actions secrets first:
+
+- `NEARLINK_ANDROID_KEYSTORE_BASE64`, `NEARLINK_ANDROID_KEYSTORE_PASSWORD`, `NEARLINK_ANDROID_KEY_ALIAS`, `NEARLINK_ANDROID_KEY_PASSWORD`.
+- `NEARLINK_SERVER_HOST`, `NEARLINK_SERVER_USER`, `NEARLINK_SERVER_SSH_KEY`, `NEARLINK_SERVER_KNOWN_HOSTS`.
+
+Android update compatibility depends on keeping the same signing key. The APK currently in `release/` is signed with this development machine's debug keystore; the workflow must use that same keystore for the first update or Android will reject it as a different signer. Back it up securely before using it for releases. Replacing it with a new key later requires a separate migration (typically uninstall and reinstall) for sideloaded users.
+
+For this GitHub-hosted project, GitHub Actions is the recommended CI/release runner. Jenkins would add a server to maintain and is unnecessary for builds, signing, and SSH deployment at this scale. Use Jenkins only if you later need private-network build agents or centralized pipelines shared across multiple repositories.
 
 ## Transfer architecture
 

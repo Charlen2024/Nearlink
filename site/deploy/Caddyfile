@@ -1,0 +1,9 @@
+www.charlen.top {
+	redir https://charlen.top{uri} permanent
+}
+
+charlen.top {
+	encode zstd gzip
+	header Strict-Transport-Security "max-age=31536000"
+	reverse_proxy 127.0.0.1:8080
+}

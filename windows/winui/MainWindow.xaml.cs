@@ -1,6 +1,9 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
+using System.IO.Compression;
+using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -13,6 +16,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Input;
+using Polyline = Microsoft.UI.Xaml.Shapes.Polyline;
 using Microsoft.Windows.AppNotifications;
 using Microsoft.Windows.AppNotifications.Builder;
 using QRCoder;
@@ -20,6 +24,7 @@ using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage.Pickers;
 using Windows.Storage;
 using Windows.Storage.Streams;
+using Windows.Graphics.Imaging;
 using Windows.System;
 using Windows.UI;
 using Windows.UI.ViewManagement;
@@ -42,12 +47,16 @@ public sealed partial class MainWindow : Window
     private readonly LanDiscoveryService _discovery;
     private readonly Dictionary<string, RemoteComputer> _pairedComputers;
     private readonly Dictionary<string, RemoteDesktopSession> _remoteSessions = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _onlineRemoteIds = new(StringComparer.Ordinal);
+    private IReadOnlyList<LanDiscoveryService.NearbyComputer> _discoveredComputers = [];
     private string? _activeRemoteId;
+    private bool _updatingConversationSelector;
     private AppWindow? _appWindow;
     private ThemePreference _themePreference;
     private int _pageHistoryIndex;
     private string _currentPage = "chat";
     private bool _started;
+    private bool _deviceEditMode;
     private bool _isQrExpanded = true;
     private bool _suppressThemeControls;
     private bool _suppressExplorerToggle;
@@ -55,8 +64,10 @@ public sealed partial class MainWindow : Window
     private bool _explorerSendInProgress;
     private readonly List<string> _queuedExplorerPaths = [];
     private Storyboard? _qrStoryboard;
+    private Storyboard? _radarPulseStoryboard;
 
     public ObservableCollection<DeviceView> Devices { get; } = [];
+    public ObservableCollection<PairedDeviceView> PairedDevices { get; } = [];
     public ObservableCollection<NearbyDeviceView> NearbyDevices { get; } = [];
     public ObservableCollection<MessageView> Messages { get; } = [];
     public ObservableCollection<MessageView> Files { get; } = [];
@@ -64,6 +75,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        _radarPulseStoryboard = RadarStage.Resources["RadarPulseStoryboard"] as Storyboard;
         _suppressExplorerToggle = true;
         ExplorerContextMenuToggle.IsOn = ExplorerShellIntegration.IsEnabled;
         ExplorerContextMenuStatus.Text = ExplorerShellIntegration.IsEnabled
@@ -84,6 +96,7 @@ public sealed partial class MainWindow : Window
         }
         catch { _notificationManager = null; }
         _pairedComputers = LoadPairedComputers();
+        RefreshConversationSelector();
         _discovery = new LanDiscoveryService(_host.DeviceId, _host.DeviceName, () => _host.BaseUrl);
         _discovery.DevicesChanged += devices => _dispatcher.TryEnqueue(() => UpdateNearbyDevices(devices));
         _host.PairApprovalRequested = ApprovePairRequestAsync;
@@ -178,6 +191,7 @@ public sealed partial class MainWindow : Window
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
+        _radarPulseStoryboard?.Begin();
         if (_started) return;
         _started = true;
         try
@@ -193,6 +207,7 @@ public sealed partial class MainWindow : Window
             StatusText.Text = "等待手机或其他电脑连接";
             StartSyncClient();
             LoadLocalConversationHistory();
+            _ = CheckForWindowsUpdatesPeriodicallyAsync();
             if (_queuedExplorerPaths.Count > 0)
             {
                 var queued = _queuedExplorerPaths.ToArray();
@@ -215,6 +230,108 @@ public sealed partial class MainWindow : Window
         _syncClient.StatusChanged += status => _dispatcher.TryEnqueue(() => StatusText.Text = status);
         _syncClient.Start();
     }
+
+    private async void CheckUpdates_Click(object sender, RoutedEventArgs e) => await CheckForWindowsUpdateAsync(showCurrent: true);
+
+    private async Task CheckForWindowsUpdatesPeriodicallyAsync()
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(15), _stop.Token);
+            while (!_stop.IsCancellationRequested)
+            {
+                await CheckForWindowsUpdateAsync(showCurrent: false);
+                await Task.Delay(TimeSpan.FromMinutes(15), _stop.Token);
+            }
+        }
+        catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
+    }
+
+    private async Task CheckForWindowsUpdateAsync(bool showCurrent)
+    {
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(12) };
+            var release = await client.GetFromJsonAsync<UpdateManifest>("https://charlen.top/api/v1/releases/windows", _stop.Token);
+            if (release is null || !Version.TryParse(release.Version.TrimStart('v'), out var latest))
+                throw new InvalidDataException("服务器返回的版本信息无效");
+            var current = typeof(MainWindow).Assembly.GetName().Version ?? new Version(1, 0, 0);
+            if (latest <= current)
+            {
+                if (showCurrent) await ShowDialogAsync("已是最新版本", $"Nearlink {current.ToString(3)} 已是最新版本。");
+                return;
+            }
+            var dialog = new ContentDialog
+            {
+                Title = $"Nearlink 有新版本 {release.Version}",
+                Content = string.IsNullOrWhiteSpace(release.Notes) ? "现在下载并安装更新？" : release.Notes,
+                PrimaryButtonText = "下载并更新",
+                CloseButtonText = "稍后",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = RootGrid.XamlRoot,
+                RequestedTheme = RootGrid.ActualTheme
+            };
+            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            {
+                try { await DownloadAndInstallWindowsUpdateAsync(client, release); }
+                catch (Exception ex) { await ShowDialogAsync("更新失败", $"Nearlink 更新未能安装：{ex.Message}"); }
+            }
+        }
+        catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            if (showCurrent) await ShowDialogAsync("检查更新失败", $"暂时无法检查更新：{ex.Message}");
+        }
+    }
+
+    private async Task DownloadAndInstallWindowsUpdateAsync(HttpClient client, UpdateManifest release)
+    {
+        if (!Uri.TryCreate(new Uri("https://charlen.top"), release.DownloadUrl, out var uri) || uri.Scheme != Uri.UriSchemeHttps || uri.Host != "charlen.top")
+            throw new InvalidDataException("更新下载地址无效");
+        var processPath = Environment.ProcessPath ?? throw new InvalidOperationException("无法定位 Nearlink 程序文件");
+        var installDirectory = Path.GetDirectoryName(processPath)!;
+        var updateDirectory = Path.Combine(Path.GetTempPath(), "Nearlink-update-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(updateDirectory);
+        try
+        {
+            using var downloadClient = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+            await using (var response = await downloadClient.GetStreamAsync(uri, _stop.Token))
+            await using (var output = File.Create(Path.Combine(updateDirectory, "update.zip")))
+                await response.CopyToAsync(output, _stop.Token);
+            var archivePath = Path.Combine(updateDirectory, "update.zip");
+            await using (var archive = File.OpenRead(archivePath))
+            {
+                var actualHash = Convert.ToHexString(await SHA256.HashDataAsync(archive, _stop.Token));
+                if (string.IsNullOrWhiteSpace(release.Sha256) || !CryptographicOperations.FixedTimeEquals(
+                        Convert.FromHexString(actualHash), Convert.FromHexString(release.Sha256)))
+                    throw new InvalidDataException("更新文件校验失败");
+            }
+            var extractionDirectory = Path.Combine(updateDirectory, "package");
+            ZipFile.ExtractToDirectory(archivePath, extractionDirectory);
+            var updatedExe = Path.Combine(extractionDirectory, "Nearlink.exe");
+            if (!File.Exists(updatedExe)) throw new InvalidDataException("更新包中缺少 Nearlink.exe");
+            var scriptPath = Path.Combine(updateDirectory, "install-update.ps1");
+            var script = $"$ErrorActionPreference='Stop'\nwhile (Get-Process -Id {Environment.ProcessId} -ErrorAction SilentlyContinue) {{ Start-Sleep -Milliseconds 300 }}\ntry {{ Copy-Item -LiteralPath '{EscapePowerShell(updatedExe)}' -Destination '{EscapePowerShell(processPath)}' -Force; Start-Process -FilePath '{EscapePowerShell(processPath)}'; Remove-Item -LiteralPath '{EscapePowerShell(updateDirectory)}' -Recurse -Force }} catch {{ Start-Process -FilePath '{EscapePowerShell(processPath)}' }}\n";
+            await File.WriteAllTextAsync(scriptPath, script, _stop.Token);
+            Process.Start(new ProcessStartInfo("powershell.exe")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
+                ArgumentList = { "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath }
+            });
+            Application.Current.Exit();
+        }
+        catch
+        {
+            try { Directory.Delete(updateDirectory, recursive: true); } catch { }
+            throw;
+        }
+    }
+
+    private static string EscapePowerShell(string value) => value.Replace("'", "''", StringComparison.Ordinal);
+
+    private sealed record UpdateManifest(string Platform, string Version, string Sha256, string DownloadUrl, string? Notes);
 
     private async void SaveDeviceName_Click(object sender, RoutedEventArgs e)
     {
@@ -313,10 +430,113 @@ public sealed partial class MainWindow : Window
         foreach (var device in connected)
             if (device.Id != _host.DesktopSessionId)
                 Devices.Add(new DeviceView(device.Id, device.Name, device.Kind));
-        DeviceCountText.Text = $"{Devices.Count} 台";
-        EmptyDevicesText.Visibility = Devices.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        RefreshNearbyDevices();
+        if (_currentPage == "devices") RefreshPairedDevicesPage();
         if (_activeRemoteId is null)
             StatusText.Text = Devices.Count > 0 ? $"{Devices.Count} 台手机或电脑在线 · 局域网直连" : "等待手机或其他电脑连接";
+        RefreshConversationSelector();
+    }
+
+    private async void ImagePreview_Tapped(object sender, TappedRoutedEventArgs e)
+    {
+        if (sender is not Image image || image.DataContext is not MessageView item || item.PreviewImage is not { } source) return;
+        var preview = new Image { Source = source, Stretch = Stretch.Uniform, MaxWidth = 1100, MaxHeight = 760, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch };
+        var ink = new Canvas();
+        Polyline? activeStroke = null;
+        ink.PointerPressed += (_, args) =>
+        {
+            var point = args.GetCurrentPoint(ink).Position;
+            activeStroke = new Polyline
+            {
+                Stroke = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 64, 64)),
+                StrokeThickness = 4,
+                StrokeLineJoin = PenLineJoin.Round,
+                Points = new PointCollection { point }
+            };
+            ink.Children.Add(activeStroke);
+            ink.CapturePointer(args.Pointer);
+            args.Handled = true;
+        };
+        ink.PointerMoved += (_, args) =>
+        {
+            if (activeStroke is null) return;
+            activeStroke.Points.Add(args.GetCurrentPoint(ink).Position);
+        };
+        ink.PointerReleased += (_, args) => { activeStroke = null; ink.ReleasePointerCapture(args.Pointer); };
+        ink.PointerCanceled += (_, args) => { activeStroke = null; ink.ReleasePointerCapture(args.Pointer); };
+        var stage = new Grid { Width = 1100, Height = 700, Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 18, 20, 25)) };
+        stage.Children.Add(preview);
+        stage.Children.Add(ink);
+        var dialog = new ContentDialog
+        {
+            Title = item.FileName,
+            Content = stage,
+            PrimaryButtonText = "保存涂鸦",
+            CloseButtonText = "关闭",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = RootGrid.XamlRoot,
+            RequestedTheme = RootGrid.ActualTheme
+        };
+        dialog.PrimaryButtonClick += async (_, args) =>
+        {
+            var deferral = args.GetDeferral();
+            try { await SaveAnnotatedImageAsync(stage, item.FileName); }
+            catch (Exception ex) { TransferStatusText.Text = $"保存图片失败：{ex.Message}"; args.Cancel = true; }
+            finally { deferral.Complete(); }
+        };
+        await dialog.ShowAsync();
+    }
+
+    private async Task SaveAnnotatedImageAsync(FrameworkElement stage, string fileName)
+    {
+        var picker = new FileSavePicker { SuggestedFileName = Path.GetFileNameWithoutExtension(fileName) + "-标注.png" };
+        picker.FileTypeChoices.Add("PNG 图片", [".png"]);
+        InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
+        var file = await picker.PickSaveFileAsync();
+        if (file is null) return;
+        var bitmap = new Microsoft.UI.Xaml.Media.Imaging.RenderTargetBitmap();
+        await bitmap.RenderAsync(stage);
+        var pixels = await bitmap.GetPixelsAsync();
+        using var stream = await file.OpenAsync(FileAccessMode.ReadWrite);
+        var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
+        var reader = DataReader.FromBuffer(pixels);
+        var pixelBytes = new byte[pixels.Length];
+        reader.ReadBytes(pixelBytes);
+        encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied,
+            (uint)bitmap.PixelWidth, (uint)bitmap.PixelHeight, 96, 96, pixelBytes);
+        await encoder.FlushAsync();
+    }
+
+    private void RefreshConversationSelector()
+    {
+        if (ConversationSelector is null) return;
+        var selectedKey = _activeRemoteId is null ? "local" : $"computer:{_activeRemoteId}";
+        _updatingConversationSelector = true;
+        try
+        {
+            ConversationSelector.Items.Clear();
+            ConversationSelector.Items.Add(new ComboBoxItem { Content = "本机设备 · 手机会话", Tag = "local" });
+            foreach (var peer in _pairedComputers.Values.Where(peer => _onlineRemoteIds.Contains(peer.DeviceId))
+                         .OrderBy(peer => peer.Name, StringComparer.CurrentCultureIgnoreCase))
+                ConversationSelector.Items.Add(new ComboBoxItem { Content = $"{peer.Name} · 电脑", Tag = $"computer:{peer.DeviceId}" });
+            ConversationSelector.SelectedItem = ConversationSelector.Items
+                .OfType<ComboBoxItem>().FirstOrDefault(item => Equals(item.Tag, selectedKey)) ?? ConversationSelector.Items[0];
+        }
+        finally { _updatingConversationSelector = false; }
+    }
+
+    private async void ConversationSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_updatingConversationSelector || ConversationSelector.SelectedItem is not ComboBoxItem { Tag: string key }) return;
+        if (key == "local") { OpenLocalSession(); return; }
+        if (!key.StartsWith("computer:", StringComparison.Ordinal)) return;
+        if (!_pairedComputers.TryGetValue(key[9..], out var computer)) return;
+        try { await ActivateRemoteAsync(computer); }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"无法打开 {computer.Name}：{ex.Message}";
+            if (_activeRemoteId == computer.DeviceId) OpenLocalSession();
+        }
     }
 
     private void AddMessage(TransferStore.Entry item, string? sourcePeerId = null, bool localPeerStore = false, bool localPhoneStore = false)
@@ -358,12 +578,10 @@ public sealed partial class MainWindow : Window
 
     private void UpdateNearbyDevices(IReadOnlyList<LanDiscoveryService.NearbyComputer> discovered)
     {
-        NearbyDevices.Clear();
+        _discoveredComputers = discovered;
         foreach (var device in discovered)
         {
             var paired = _pairedComputers.TryGetValue(device.DeviceId, out var saved);
-            NearbyDevices.Add(new NearbyDeviceView(device.DeviceId, device.Name, device.BaseUrl,
-                paired ? "已配对 · 点击打开" : "首次连接需对方确认", paired));
             if (!paired) continue;
             if (!string.Equals(saved!.BaseUrl, device.BaseUrl, StringComparison.Ordinal))
             {
@@ -372,8 +590,6 @@ public sealed partial class MainWindow : Window
             }
             if (!_remoteSessions.ContainsKey(device.DeviceId)) StartRemoteSession(_pairedComputers[device.DeviceId]);
         }
-        NearbyDeviceCountText.Text = discovered.Count == 0 ? "0 台" : $"{discovered.Count} 台";
-        EmptyNearbyText.Visibility = discovered.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         if (_activeRemoteId is not null && _pairedComputers.TryGetValue(_activeRemoteId, out var active) &&
             discovered.FirstOrDefault(device => device.DeviceId == _activeRemoteId) is { } activeBeacon &&
             !string.Equals(active.BaseUrl, activeBeacon.BaseUrl, StringComparison.Ordinal))
@@ -382,6 +598,28 @@ public sealed partial class MainWindow : Window
             SavePairedComputers();
             _ = ReconnectActiveRemoteAsync(_pairedComputers[_activeRemoteId]);
         }
+        RefreshNearbyDevices();
+        RefreshConversationSelector();
+    }
+
+    private void RefreshNearbyDevices()
+    {
+        NearbyDevices.Clear();
+        foreach (var device in _discoveredComputers)
+        {
+            var paired = _pairedComputers.TryGetValue(device.DeviceId, out var saved);
+            NearbyDevices.Add(new NearbyDeviceView(device.DeviceId, device.Name, device.BaseUrl,
+                paired ? "已配对 · 点击打开传输" : "首次连接需对方确认", paired, "computer"));
+        }
+        foreach (var device in Devices.Where(device => string.Equals(device.Kind, "phone", StringComparison.OrdinalIgnoreCase)))
+        {
+            if (NearbyDevices.Any(nearby => nearby.DeviceId == device.Id)) continue;
+            NearbyDevices.Add(new NearbyDeviceView(device.Id, device.Name, "", "已连接 · 点击打开传输", true, "phone-session"));
+        }
+        NearbyDeviceCountText.Text = NearbyDevices.Count == 0 ? "0 台" : $"{NearbyDevices.Count} 台";
+        EmptyNearbyText.Visibility = NearbyDevices.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (NearbyDevices.Count == 0)
+            EmptyNearbyText.Text = "正在查找同一局域网内可连接的 Nearlink 设备…";
     }
 
     private async Task<bool> ApprovePairRequestAsync(TransferHost.PairRequest request, CancellationToken cancellationToken)
@@ -423,6 +661,11 @@ public sealed partial class MainWindow : Window
     private async void ConnectNearby_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: NearbyDeviceView item }) return;
+        if (item.Kind == "phone-session")
+        {
+            OpenLocalSession();
+            return;
+        }
         try
         {
             var baseUrl = item.BaseUrl;
@@ -461,21 +704,25 @@ public sealed partial class MainWindow : Window
     private async Task ActivateRemoteAsync(RemoteComputer computer)
     {
         _activeRemoteId = computer.DeviceId;
-        LocalSessionButton.Visibility = Visibility.Visible;
+        RefreshConversationSelector();
         Messages.Clear(); Files.Clear(); _messageIds.Clear();
         StatusText.Text = $"正在连接 {computer.Name}…";
         var remote = StartRemoteSession(computer);
         await LoadPeerConversationAsync(computer, remote);
+        if (_activeRemoteId != computer.DeviceId) return;
         NavigateToPage("chat");
     }
 
     private async Task LoadPeerConversationAsync(RemoteComputer computer, RemoteDesktopSession remote)
     {
         var history = new List<(TransferStore.Entry Item, bool LocalCopy)>();
-        try { history.AddRange((await remote.GetHistoryAsync(_stop.Token)).Select(item => (item, false))); }
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
+        timeout.CancelAfter(TimeSpan.FromSeconds(8));
+        try { history.AddRange((await remote.GetHistoryAsync(timeout.Token)).Select(item => (item, false))); }
         catch (Exception ex) { StatusText.Text = $"连接中 · {ex.Message}"; }
         try { history.AddRange(_host.GetPeerHistory(computer.DeviceId).Select(item => (item, true))); }
         catch (Exception ex) { StatusText.Text = $"本机历史读取失败 · {ex.Message}"; }
+        if (_activeRemoteId != computer.DeviceId) return;
         foreach (var (item, localCopy) in history.OrderBy(entry => entry.Item.Time).ThenBy(entry => entry.Item.Id, StringComparer.Ordinal))
             AddMessage(item, computer.DeviceId, localCopy);
     }
@@ -493,9 +740,18 @@ public sealed partial class MainWindow : Window
         session.EventReceived += message => _dispatcher.TryEnqueue(() => HandleServerEvent(message, computer.DeviceId));
         session.StatusChanged += status => _dispatcher.TryEnqueue(() =>
         {
+            var online = status.StartsWith("已连接", StringComparison.Ordinal);
+            if (online) _onlineRemoteIds.Add(computer.DeviceId);
+            else _onlineRemoteIds.Remove(computer.DeviceId);
             var nearby = NearbyDevices.FirstOrDefault(device => device.DeviceId == computer.DeviceId);
-            if (nearby is not null) nearby.Detail = status.StartsWith("已连接", StringComparison.Ordinal) ? "已配对 · 在线" : "已配对 · 正在重连";
-            if (_activeRemoteId == computer.DeviceId) StatusText.Text = $"{computer.Name} · {status}";
+            if (nearby is not null) nearby.Detail = online ? "已配对 · 在线" : "已配对 · 正在重连";
+            if (!online && _activeRemoteId == computer.DeviceId)
+            {
+                OpenLocalSession();
+                StatusText.Text = $"{computer.Name} 已断开，已切换到本机历史";
+            }
+            else if (_activeRemoteId == computer.DeviceId) StatusText.Text = $"{computer.Name} · {status}";
+            RefreshConversationSelector();
         });
         _remoteSessions[computer.DeviceId] = session;
         session.Start();
@@ -504,6 +760,7 @@ public sealed partial class MainWindow : Window
 
     private async Task ReconnectActiveRemoteAsync(RemoteComputer computer)
     {
+        _onlineRemoteIds.Remove(computer.DeviceId);
         if (_remoteSessions.Remove(computer.DeviceId, out var old)) await old.DisposeAsync();
         var session = StartRemoteSession(computer);
         Messages.Clear(); Files.Clear(); _messageIds.Clear();
@@ -518,7 +775,7 @@ public sealed partial class MainWindow : Window
     private void OpenLocalSession()
     {
         _activeRemoteId = null;
-        LocalSessionButton.Visibility = Visibility.Collapsed;
+        RefreshConversationSelector();
         Messages.Clear(); Files.Clear(); _messageIds.Clear();
         LoadLocalConversationHistory();
         StatusText.Text = Devices.Count > 0 ? $"{Devices.Count} 台其他设备在线 · 消息同步中" : "等待手机或其他电脑连接";
@@ -559,8 +816,108 @@ public sealed partial class MainWindow : Window
         catch { }
     }
 
+    private void RefreshPairedDevicesPage()
+    {
+        if (PairedDevicesSubtitle is null) return;
+        var selectedIds = PairedDevices.Where(device => device.IsSelected).Select(device => device.DeviceId).ToHashSet(StringComparer.Ordinal);
+        var records = new Dictionary<string, (string Name, string Kind)>(StringComparer.Ordinal);
+        foreach (var peer in _pairedComputers.Values)
+        {
+            var kind = Devices.FirstOrDefault(device => device.Id == peer.DeviceId)?.Kind ??
+                (Uri.TryCreate(peer.BaseUrl, UriKind.Absolute, out var uri) && uri.Port == 51463 ? "phone" : "computer");
+            records[peer.DeviceId] = (peer.Name, kind);
+        }
+        foreach (var device in Devices)
+            records[device.Id] = (device.Name, device.Kind);
+        foreach (var id in _host.GetTrustedPeerIds())
+            if (!records.ContainsKey(id)) records[id] = ($"已配对设备 · {id[..Math.Min(8, id.Length)]}", "device");
+
+        PairedDevices.Clear();
+        foreach (var (id, record) in records.OrderBy(item => item.Value.Name, StringComparer.CurrentCultureIgnoreCase))
+        {
+            var online = Devices.Any(device => device.Id == id) || _onlineRemoteIds.Contains(id);
+            var row = new PairedDeviceView(id, record.Name, record.Kind, online ? "在线" : "当前离线");
+            row.SelectionChanged += UpdateDeviceSelectionUi;
+            row.SetEditMode(_deviceEditMode);
+            row.IsSelected = selectedIds.Contains(id);
+            PairedDevices.Add(row);
+        }
+        EmptyPairedDevicesText.Visibility = PairedDevices.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        UpdateDeviceSelectionUi();
+    }
+
+    private void ToggleDeviceEdit_Click(object sender, RoutedEventArgs e)
+    {
+        _deviceEditMode = !_deviceEditMode;
+        ToggleDeviceEditButton.Content = _deviceEditMode ? "完成" : "编辑";
+        DeviceEditActions.Visibility = _deviceEditMode ? Visibility.Visible : Visibility.Collapsed;
+        PairedDevicesSubtitle.Text = _deviceEditMode ? "选择要移除的设备；移除后可再次配对" : "电脑和手机的配对记录";
+        foreach (var device in PairedDevices)
+        {
+            device.SetEditMode(_deviceEditMode);
+            if (!_deviceEditMode) device.IsSelected = false;
+        }
+        UpdateDeviceSelectionUi();
+    }
+
+    private void UpdateDeviceSelectionUi()
+    {
+        if (DeviceSelectionText is null) return;
+        var count = PairedDevices.Count(device => device.IsSelected);
+        DeviceSelectionText.Text = $"已选择 {count} 台";
+        RemoveSelectedDevicesButton.Content = $"移除所选（{count}）";
+        RemoveSelectedDevicesButton.IsEnabled = count > 0;
+    }
+
+    private async void RemoveSelectedDevices_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = PairedDevices.Where(device => device.IsSelected).ToArray();
+        if (selected.Length == 0) return;
+        var names = string.Join("、", selected.Take(5).Select(device => device.Name));
+        var extra = selected.Length > 5 ? $"等另外 {selected.Length - 5} 台设备" : "";
+        var dialog = new ContentDialog
+        {
+            Title = $"移除 {selected.Length} 台设备？",
+            Content = $"将断开并移除这些设备的配对：{names}{extra}。之后仍可重新配对。",
+            PrimaryButtonText = "移除设备",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = RootGrid.XamlRoot,
+            RequestedTheme = RootGrid.ActualTheme
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        foreach (var device in selected)
+        {
+            _onlineRemoteIds.Remove(device.DeviceId);
+            _pairedComputers.Remove(device.DeviceId);
+            if (_remoteSessions.Remove(device.DeviceId, out var session)) await session.DisposeAsync();
+            await _host.ForgetConnectedDeviceAsync(device.DeviceId);
+            if (_activeRemoteId == device.DeviceId)
+            {
+                _activeRemoteId = null;
+                Messages.Clear(); Files.Clear(); _messageIds.Clear();
+                LoadLocalConversationHistory();
+                StatusText.Text = "设备已移除 · 等待手机或其他电脑连接";
+            }
+        }
+        SavePairedComputers();
+        _deviceEditMode = false;
+        ToggleDeviceEditButton.Content = "编辑";
+        DeviceEditActions.Visibility = Visibility.Collapsed;
+        PairedDevicesSubtitle.Text = "电脑和手机的配对记录";
+        RefreshConversationSelector();
+        RefreshNearbyDevices();
+        RefreshPairedDevicesPage();
+    }
+
     private void NavChat_Click(object sender, RoutedEventArgs e) => NavigateToPage("chat");
     private void NavFiles_Click(object sender, RoutedEventArgs e) => NavigateToPage("files");
+    private void NavDevices_Click(object sender, RoutedEventArgs e)
+    {
+        RefreshPairedDevicesPage();
+        NavigateToPage("devices");
+    }
     private void NavSettings_Click(object sender, RoutedEventArgs e) => NavigateToPage("settings");
 
     private void NavigateToPage(string page)
@@ -608,11 +965,20 @@ public sealed partial class MainWindow : Window
 
     private void ShowPage(string page)
     {
+        if (_currentPage == "devices" && page != "devices" && _deviceEditMode)
+            ToggleDeviceEdit_Click(this, new RoutedEventArgs());
         ChatPage.Visibility = page == "chat" ? Visibility.Visible : Visibility.Collapsed;
         FilesPage.Visibility = page == "files" ? Visibility.Visible : Visibility.Collapsed;
+        DevicesPage.Visibility = page == "devices" ? Visibility.Visible : Visibility.Collapsed;
         SettingsPage.Visibility = page == "settings" ? Visibility.Visible : Visibility.Collapsed;
         _currentPage = page;
-        var target = page == "chat" ? ChatPage : page == "files" ? FilesPage : SettingsPage;
+        var target = page switch
+        {
+            "chat" => (FrameworkElement)ChatPage,
+            "files" => FilesPage,
+            "devices" => DevicesPage,
+            _ => SettingsPage
+        };
         target.Opacity = 0;
         var transition = new DoubleAnimation
         {
@@ -1161,6 +1527,7 @@ public sealed partial class MainWindow : Window
 
     private async void Window_Closed(object sender, WindowEventArgs args)
     {
+        _radarPulseStoryboard?.Stop();
         _uiSettings.ColorValuesChanged -= SystemColorsChanged;
         _stop.Cancel();
         await _discovery.DisposeAsync();
@@ -1191,11 +1558,30 @@ public sealed partial class MainWindow : Window
         public string Name { get; }
         public string BaseUrl { get; }
         public bool IsPaired { get; }
-        public string ActionText => IsPaired ? "打开" : "连接";
+        public string Kind { get; }
+        public string ActionText => IsPaired ? "打开传输" : "申请配对";
         public string Detail { get => _detail; set { if (_detail == value) return; _detail = value; PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Detail))); } }
-        public NearbyDeviceView(string deviceId, string name, string baseUrl, string detail, bool isPaired)
-        { DeviceId = deviceId; Name = name; BaseUrl = baseUrl; _detail = detail; IsPaired = isPaired; }
+        public NearbyDeviceView(string deviceId, string name, string baseUrl, string detail, bool isPaired, string kind)
+        { DeviceId = deviceId; Name = name; BaseUrl = baseUrl; _detail = detail; IsPaired = isPaired; Kind = kind; }
         public event PropertyChangedEventHandler? PropertyChanged;
+    }
+
+    public sealed class PairedDeviceView : INotifyPropertyChanged
+    {
+        private bool _isSelected;
+        private Visibility _editVisibility = Visibility.Collapsed;
+        public string DeviceId { get; }
+        public string Name { get; }
+        public string Kind { get; }
+        public string Detail { get; }
+        public string DisplayName => $"{Name} · {(Kind == "phone" ? "手机" : Kind is "computer" or "desktop" ? "电脑" : "设备")}";
+        public string IconGlyph => Kind == "phone" ? "\uE8EA" : "\uE7F4";
+        public bool IsSelected { get => _isSelected; set { if (_isSelected == value) return; _isSelected = value; PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected))); SelectionChanged?.Invoke(); } }
+        public Visibility EditVisibility { get => _editVisibility; private set { if (_editVisibility == value) return; _editVisibility = value; PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(EditVisibility))); } }
+        public event Action? SelectionChanged;
+        public event PropertyChangedEventHandler? PropertyChanged;
+        public PairedDeviceView(string deviceId, string name, string kind, string detail) { DeviceId = deviceId; Name = name; Kind = kind; Detail = detail; }
+        public void SetEditMode(bool enabled) => EditVisibility = enabled ? Visibility.Visible : Visibility.Collapsed;
     }
 
     public sealed record RemoteComputer(string DeviceId, string Name, string BaseUrl, string Token);

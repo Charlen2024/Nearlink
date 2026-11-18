@@ -1,0 +1,29 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -ne 0 ]; then
+  echo "usage: nearlink-install-release" >&2
+  exit 2
+fi
+
+exec 9>/run/lock/nearlink-release.lock
+flock -n 9 || { echo "another release is being installed" >&2; exit 1; }
+
+source_dir=$(realpath -e -- /tmp/nearlink-release)
+if [ "$source_dir" != "/tmp/nearlink-release" ]; then
+  echo "invalid release staging directory" >&2
+  exit 2
+fi
+
+destination=/var/lib/nearlink-site/releases
+install -d -o nearlink -g nearlink -m 755 "$destination"
+for name in Nearlink-Windows-x64.zip Nearlink-Android.apk windows.json android.json; do
+  source_file="$source_dir/$name"
+  if [ ! -f "$source_file" ] || [ -L "$source_file" ]; then
+    echo "missing or invalid release file: $name" >&2
+    exit 1
+  fi
+done
+for name in Nearlink-Windows-x64.zip Nearlink-Android.apk windows.json android.json; do
+  install -o nearlink -g nearlink -m 644 -- "$source_dir/$name" "$destination/$name"
+done
