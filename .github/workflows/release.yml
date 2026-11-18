@@ -98,7 +98,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" artifacts/Nearlink-Windows-x64.zip artifacts/Nearlink-Android.apk --title "Nearlink ${TAG#v}" --generate-notes
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" artifacts/Nearlink-Windows-x64.zip artifacts/Nearlink-Android.apk --clobber
+          else
+            gh release create "$TAG" artifacts/Nearlink-Windows-x64.zip artifacts/Nearlink-Android.apk --title "Nearlink ${TAG#v}" --generate-notes
+          fi
       - name: Install update files on the website server
         env:
           DEPLOY_HOST: ${{ secrets.NEARLINK_SERVER_HOST }}
