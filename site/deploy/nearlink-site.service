@@ -1,0 +1,33 @@
+[Unit]
+Description=Nearlink product website
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=nearlink
+Group=nearlink
+WorkingDirectory=/opt/nearlink-site
+StateDirectory=nearlink-site
+Environment=NEARLINK_ADDR=127.0.0.1:8080
+Environment=NEARLINK_VERSION=1.0.0
+Environment=NEARLINK_RELEASES_DIR=/var/lib/nearlink-site/releases
+ExecStart=/opt/nearlink-site/nearlink-site
+Restart=always
+RestartSec=2
+TimeoutStopSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

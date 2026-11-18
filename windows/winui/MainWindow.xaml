@@ -39,10 +39,14 @@
                         <MenuFlyoutSeparator />
                         <MenuFlyoutItem Text="选择文件发送…" Click="Attach_Click" />
                     </MenuBarItem>
+                    <MenuBarItem Title="设备">
+                        <MenuFlyoutItem Text="已配对设备" Click="NavDevices_Click" />
+                    </MenuBarItem>
                     <MenuBarItem Title="设置">
                         <MenuFlyoutItem Text="打开设置" Click="NavSettings_Click" />
                     </MenuBarItem>
                     <MenuBarItem Title="关于">
+                        <MenuFlyoutItem Text="检查更新" Click="CheckUpdates_Click" />
                         <MenuFlyoutItem Text="关于 Nearlink" Click="About_Click" />
                     </MenuBarItem>
                 </MenuBar>
@@ -85,27 +89,34 @@
                     </Border>
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="0,0,14,0">
                         <StackPanel Spacing="7" Padding="0,0,6,0">
-                            <Grid Margin="2,0,2,2">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBlock Text="已连接设备" FontSize="14" FontWeight="SemiBold" />
-                                <TextBlock x:Name="DeviceCountText" Grid.Column="1" Text="0 台" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
-                            </Grid>
-                            <TextBlock x:Name="EmptyDevicesText" Text="还没有手机或电脑连接" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Margin="4,4,4,10" TextWrapping="Wrap" />
-                            <ListView x:Name="DeviceList" ItemsSource="{x:Bind Devices}" Background="Transparent" BorderThickness="0" Padding="0" SelectionMode="None" ScrollViewer.VerticalScrollMode="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled">
-                                <ListView.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,5">
-                                            <StackPanel Orientation="Horizontal" Spacing="9">
-                                                <FontIcon Glyph="&#xE8D4;" FontSize="14" Foreground="{ThemeResource SystemFillColorSuccessBrush}" />
-                                                <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" />
-                                            </StackPanel>
-                                        </Border>
-                                    </DataTemplate>
-                                </ListView.ItemTemplate>
-                            </ListView>
+                            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12" Padding="10,12" Margin="0,0,0,7">
+                                <StackPanel HorizontalAlignment="Stretch" Spacing="2">
+                                    <Grid x:Name="RadarStage" Width="220" Height="142" HorizontalAlignment="Center">
+                                        <Grid.Resources>
+                                            <Storyboard x:Name="RadarPulseStoryboard">
+                                                <DoubleAnimation Storyboard.TargetName="RadarPulse" Storyboard.TargetProperty="Opacity" From="0.55" To="0" Duration="0:0:1.9" RepeatBehavior="Forever" />
+                                                <DoubleAnimation Storyboard.TargetName="RadarPulseScale" Storyboard.TargetProperty="ScaleX" From="1" To="3.2" Duration="0:0:1.9" RepeatBehavior="Forever" />
+                                                <DoubleAnimation Storyboard.TargetName="RadarPulseScale" Storyboard.TargetProperty="ScaleY" From="1" To="3.2" Duration="0:0:1.9" RepeatBehavior="Forever" />
+                                            </Storyboard>
+                                        </Grid.Resources>
+                                        <Ellipse Width="136" Height="136" Stroke="{ThemeResource CardStrokeColorDefaultBrush}" StrokeThickness="1" />
+                                        <Ellipse Width="100" Height="100" Stroke="{ThemeResource CardStrokeColorDefaultBrush}" StrokeThickness="1" />
+                                        <Ellipse Width="64" Height="64" Stroke="{ThemeResource AccentFillColorSecondaryBrush}" StrokeThickness="1.5" />
+                                        <Ellipse x:Name="RadarPulse" Width="24" Height="24" Fill="{ThemeResource AccentFillColorDefaultBrush}" Opacity="0.55" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                            <Ellipse.RenderTransform>
+                                                <ScaleTransform x:Name="RadarPulseScale" CenterX="12" CenterY="12" ScaleX="1" ScaleY="1" />
+                                            </Ellipse.RenderTransform>
+                                        </Ellipse>
+                                        <Ellipse Width="12" Height="12" Fill="{ThemeResource AccentFillColorDefaultBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        <Ellipse Width="7" Height="7" Fill="{ThemeResource AccentFillColorDefaultBrush}" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,7,0,0" />
+                                    </Grid>
+                                    <TextBlock Text="正在搜索附近的设备" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                                    <TextBlock Text="同一局域网内的电脑和手机会显示在这里" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" TextAlignment="Center" HorizontalAlignment="Center" />
+                                </StackPanel>
+                            </Border>
                             <Grid Margin="2,12,2,2">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBlock Text="附近设备" FontSize="14" FontWeight="SemiBold" />
+                                <TextBlock Text="搜索到的设备" FontSize="14" FontWeight="SemiBold" />
                                 <TextBlock x:Name="NearbyDeviceCountText" Grid.Column="1" Text="搜索中…" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
                             </Grid>
                             <TextBlock x:Name="EmptyNearbyText" Text="正在查找同一局域网内可连接的 Nearlink 设备…" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Margin="4,4,4,8" TextWrapping="Wrap" />
@@ -141,7 +152,7 @@
                                 <TextBlock Text="设备互传" FontSize="16" FontWeight="SemiBold" />
                                 <TextBlock x:Name="StatusText" Text="正在启动…" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                             </StackPanel>
-                            <Button x:Name="LocalSessionButton" Grid.Column="1" Content="本机设备" Click="LocalSession_Click" Style="{ThemeResource SubtleButtonStyle}" Visibility="Collapsed" VerticalAlignment="Center" />
+                            <ComboBox x:Name="ConversationSelector" Grid.Column="1" MinWidth="180" MaxWidth="300" SelectionChanged="ConversationSelector_SelectionChanged" VerticalAlignment="Center" />
                         </Grid>
                     </Border>
                     <ListView x:Name="MessagesList" Grid.Row="1" ItemsSource="{x:Bind Messages}" Background="Transparent" BorderThickness="0" Padding="22,18" SelectionMode="None" ScrollViewer.VerticalScrollMode="Auto" ScrollViewer.VerticalScrollBarVisibility="Auto">
@@ -151,9 +162,9 @@
                                     <Border Background="{Binding BubbleBrush}" HorizontalAlignment="{Binding Alignment}" CornerRadius="12" Padding="12" MaxWidth="440">
                                         <StackPanel Spacing="8">
                                             <TextBlock Text="{Binding Meta}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                            <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="14" MaxWidth="400" Visibility="{Binding TextVisibility}" />
+                                            <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="14" MaxWidth="400" IsTextSelectionEnabled="True" Visibility="{Binding TextVisibility}" />
                                             <Border CornerRadius="8" Background="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left" Padding="2" Visibility="{Binding ImageVisibility}">
-                                                <Image Source="{Binding PreviewImage}" MaxWidth="280" MaxHeight="250" Stretch="Uniform" />
+                                                <Image Source="{Binding PreviewImage}" MaxWidth="280" MaxHeight="250" Stretch="Uniform" Tapped="ImagePreview_Tapped" />
                                             </Border>
                                             <Button Tag="{Binding}" Click="Download_Click" HorizontalAlignment="Stretch" Style="{ThemeResource SubtleButtonStyle}" Padding="10,8" Visibility="{Binding FileVisibility}">
                                                 <Grid ColumnSpacing="10">
@@ -221,6 +232,48 @@
                             </DataTemplate>
                         </ListView.ItemTemplate>
                     </ListView>
+                </Grid>
+
+                <Grid x:Name="DevicesPage" Visibility="Collapsed">
+                    <Grid.RowDefinitions><RowDefinition Height="68" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <Border Grid.Row="0" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="22,0">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center" Spacing="3">
+                                <TextBlock Text="已配对设备" FontSize="16" FontWeight="SemiBold" />
+                                <TextBlock x:Name="PairedDevicesSubtitle" Text="电脑和手机的配对记录" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            </StackPanel>
+                            <Button x:Name="ToggleDeviceEditButton" Grid.Column="1" Content="编辑" Click="ToggleDeviceEdit_Click" Style="{ThemeResource SubtleButtonStyle}" />
+                        </Grid>
+                    </Border>
+                    <Grid Grid.Row="1" Margin="18,14">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                        <TextBlock x:Name="EmptyPairedDevicesText" Text="还没有配对设备。附近设备会出现在连接侧栏。" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Margin="4,4,4,12" TextWrapping="Wrap" />
+                        <ListView x:Name="PairedDevicesList" Grid.Row="1" ItemsSource="{x:Bind PairedDevices}" Background="Transparent" BorderThickness="0" Padding="0" SelectionMode="None" ScrollViewer.VerticalScrollBarVisibility="Auto">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="10" Padding="14,12" Margin="0,0,0,8">
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                            <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" Visibility="{Binding EditVisibility}" VerticalAlignment="Center" />
+                                            <FontIcon Grid.Column="1" Glyph="{Binding IconGlyph}" FontSize="20" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Center" />
+                                            <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="3">
+                                                <TextBlock Text="{Binding DisplayName}" FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{Binding Detail}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </Grid>
+                    <Border x:Name="DeviceEditActions" Grid.Row="2" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Padding="18,12" Visibility="Collapsed">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock x:Name="DeviceSelectionText" Text="已选择 0 台" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <Button x:Name="RemoveSelectedDevicesButton" Grid.Column="1" Content="移除所选（0）" Click="RemoveSelectedDevices_Click" IsEnabled="False" Style="{ThemeResource AccentButtonStyle}" />
+                        </Grid>
+                    </Border>
                 </Grid>
 
                 <Grid x:Name="SettingsPage" Visibility="Collapsed">

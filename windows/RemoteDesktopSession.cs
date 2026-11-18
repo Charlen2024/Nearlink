@@ -49,7 +49,7 @@ public sealed class RemoteDesktopSession : IAsyncDisposable
 
     public async Task SendMessageAsync(string text, CancellationToken cancellationToken = default)
     {
-        var url = $"/api/message?code={Uri.EscapeDataString(_token)}&from={Uri.EscapeDataString(_name)}&session={Uri.EscapeDataString(_deviceId)}";
+        var url = $"/api/message?code={Uri.EscapeDataString(_token)}&from={Uri.EscapeDataString(_name)}&fromId={Uri.EscapeDataString(_deviceId)}&session={Uri.EscapeDataString(_deviceId)}";
         using var response = await _http.PostAsJsonAsync(url, new MessageRequest(text), JsonOptions, cancellationToken);
         response.EnsureSuccessStatusCode();
     }

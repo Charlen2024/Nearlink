@@ -11,8 +11,8 @@ android {
         applicationId = "com.charlen2024.nearlink"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = providers.environmentVariable("NEARLINK_VERSION_CODE").orNull?.toIntOrNull() ?: 1
+        versionName = providers.environmentVariable("NEARLINK_VERSION").orNull ?: "1.0.0"
     }
 
     compileOptions {
@@ -20,6 +20,25 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+
+    signingConfigs {
+        create("release") {
+            val keystorePath = providers.environmentVariable("NEARLINK_KEYSTORE_PATH").orNull
+            if (!keystorePath.isNullOrBlank()) {
+                storeFile = file(keystorePath)
+                storePassword = providers.environmentVariable("NEARLINK_KEYSTORE_PASSWORD").orNull
+                keyAlias = providers.environmentVariable("NEARLINK_KEY_ALIAS").orNull
+                keyPassword = providers.environmentVariable("NEARLINK_KEY_PASSWORD").orNull
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            if (!providers.environmentVariable("NEARLINK_KEYSTORE_PATH").orNull.isNullOrBlank())
+                signingConfig = signingConfigs.getByName("release")
+        }
+    }
 }
 
 dependencies {

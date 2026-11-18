@@ -8,6 +8,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Nearlink</AssemblyName>
     <RootNamespace>Nearlink.Native</RootNamespace>
+    <Version>1.0.0</Version>
+    <FileVersion>1.0.0.0</FileVersion>
+    <InformationalVersion>1.0.0</InformationalVersion>
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <SelfContained>true</SelfContained>
@@ -22,6 +25,12 @@
     <PackageReference Include="QRCoder" Version="1.6.0" />
     <Compile Include="..\TransferHost.cs" Link="TransferHost.cs" />
     <Compile Include="..\TransferStore.cs" Link="TransferStore.cs" />
+    <Compile Include="..\LanDiscoveryService.cs" Link="LanDiscoveryService.cs" />
+    <Compile Include="..\RemoteDesktopSession.cs" Link="RemoteDesktopSession.cs" />
+    <Compile Include="..\DesktopSyncClient.cs" Link="DesktopSyncClient.cs" />
+    <Compile Include="..\ReliableTransfer.cs" Link="ReliableTransfer.cs" />
+    <EmbeddedResource Include="..\Assets\nearlink.ico" LogicalName="Nearlink.Native.Assets.nearlink.ico" />
+    <EmbeddedResource Include="..\Assets\nearlink-about.png" LogicalName="Nearlink.Native.Assets.nearlink-about.png" />
     <EmbeddedResource Include="..\wwwroot\**\*" LogicalName="Nearlink.Native.wwwroot.%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

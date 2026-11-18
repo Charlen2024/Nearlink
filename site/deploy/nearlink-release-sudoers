@@ -1,0 +1,2 @@
+# Install on the server as /etc/sudoers.d/nearlink-release, then validate with visudo.
+ubuntu ALL=(root) NOPASSWD: /usr/local/sbin/nearlink-install-release /tmp/nearlink-release

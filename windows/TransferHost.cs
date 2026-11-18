@@ -189,7 +189,8 @@ public sealed class TransferHost : IAsyncDisposable
             var text = body?.Text?.Trim();
             if (string.IsNullOrWhiteSpace(text)) return Results.BadRequest(new { error = "消息不能为空" });
             if (text.Length > 4000) return Results.BadRequest(new { error = "消息不能超过 4000 个字符" });
-            var item = await access.Store.AddMessageAsync(text, CleanName(request.Query["from"].ToString()) ?? "电脑", access.PeerDeviceId ?? access.PhoneSessionId ?? _sessionId, request.HttpContext.RequestAborted);
+            var senderId = access.PeerDeviceId ?? CleanName(request.Query["fromId"].ToString()) ?? access.PhoneSessionId ?? _sessionId;
+            var item = await access.Store.AddMessageAsync(text, CleanName(request.Query["from"].ToString()) ?? "电脑", senderId, request.HttpContext.RequestAborted);
             await BroadcastAsync(new ServerEvent("message", item), access.RoomId);
             return Results.Ok();
         });
@@ -505,6 +506,20 @@ public sealed class TransferHost : IAsyncDisposable
             SaveTrustedPeers();
             return token;
         }
+    }
+
+    public IReadOnlyList<string> GetTrustedPeerIds() => _trustedPeerTokens.Keys.ToArray();
+
+    public async Task ForgetConnectedDeviceAsync(string deviceId)
+    {
+        foreach (var peer in _peers.Values.Where(peer => peer.SessionId == deviceId).ToArray())
+        {
+            _peers.TryRemove(peer.Socket, out _);
+            try { if (peer.Socket.State == WebSocketState.Open) await peer.Socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "device removed", CancellationToken.None); } catch { }
+        }
+        lock (_trustedPeerLock)
+            if (_trustedPeerTokens.TryRemove(deviceId, out _)) SaveTrustedPeers();
+        await BroadcastPresenceAsync();
     }
 
     private void RegisterPeerToken(string deviceId, string token)
