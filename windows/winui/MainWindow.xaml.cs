@@ -1519,6 +1519,16 @@ public sealed partial class MainWindow : Window
         var titleBlock = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 3 };
         titleBlock.Children.Add(new TextBlock { Text = "Nearlink", FontSize = 22, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         titleBlock.Children.Add(new TextBlock { Text = "Windows 与手机之间的局域网互传", Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"] });
+        var appVersion = typeof(MainWindow).Assembly.GetName().Version;
+        var versionText = appVersion is null
+            ? "版本未知"
+            : $"版本 {appVersion.Major}.{appVersion.Minor}.{Math.Max(appVersion.Build, 0)}";
+        titleBlock.Children.Add(new TextBlock
+        {
+            Text = versionText,
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+        });
         header.Children.Add(mark);
         header.Children.Add(titleBlock);
         content.Children.Add(header);
