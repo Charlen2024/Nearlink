@@ -4,6 +4,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Diagnostics;
 using System.Security.Cryptography;
+using System.Net;
 using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -251,8 +252,7 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(12) };
-            var release = await client.GetFromJsonAsync<UpdateManifest>("https://charlen.top/api/v1/releases/windows", _stop.Token);
+            var release = await GetWindowsUpdateManifestAsync(_stop.Token);
             if (release is null || !Version.TryParse(release.Version.TrimStart('v'), out var latest))
                 throw new InvalidDataException("服务器返回的版本信息无效");
             var current = typeof(MainWindow).Assembly.GetName().Version ?? new Version(1, 0, 0);
@@ -273,32 +273,77 @@ public sealed partial class MainWindow : Window
             };
             if (await dialog.ShowAsync() == ContentDialogResult.Primary)
             {
-                try { await DownloadAndInstallWindowsUpdateAsync(client, release); }
+                try { await DownloadAndInstallWindowsUpdateAsync(release); }
                 catch (Exception ex) { await ShowDialogAsync("更新失败", $"Nearlink 更新未能安装：{ex.Message}"); }
             }
         }
         catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            if (showCurrent) await ShowDialogAsync("检查更新失败", $"暂时无法检查更新：{ex.Message}");
+            if (showCurrent) await ShowDialogAsync("检查更新失败", ex is HttpRequestException
+                ? ex.Message
+                : $"暂时无法检查更新：{ex.Message}");
         }
     }
 
-    private async Task DownloadAndInstallWindowsUpdateAsync(HttpClient client, UpdateManifest release)
+    private static readonly UpdateConnectionRoute[] UpdateConnectionRoutes =
+    [
+        UpdateConnectionRoute.Default,
+        UpdateConnectionRoute.WindowsProxy,
+        UpdateConnectionRoute.Direct,
+        UpdateConnectionRoute.Default,
+        UpdateConnectionRoute.WindowsProxy,
+        UpdateConnectionRoute.Direct
+    ];
+
+    private enum UpdateConnectionRoute { Default, WindowsProxy, Direct }
+
+    private static HttpClient CreateUpdateHttpClient(UpdateConnectionRoute route, TimeSpan timeout)
+    {
+        if (route == UpdateConnectionRoute.Default) return new HttpClient { Timeout = timeout };
+        var handler = new HttpClientHandler();
+        if (route == UpdateConnectionRoute.Direct)
+            handler.UseProxy = false;
+        else
+        {
+            handler.UseProxy = true;
+            handler.Proxy = WebRequest.GetSystemWebProxy();
+        }
+        return new HttpClient(handler) { Timeout = timeout };
+    }
+
+    private async Task<UpdateManifest?> GetWindowsUpdateManifestAsync(CancellationToken cancellationToken)
+    {
+        Exception? lastError = null;
+        foreach (var route in UpdateConnectionRoutes)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                using var client = CreateUpdateHttpClient(route, TimeSpan.FromSeconds(4));
+                return await client.GetFromJsonAsync<UpdateManifest>("https://charlen.top/api/v1/releases/windows", cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException)
+            {
+                lastError = ex;
+                await Task.Delay(250, cancellationToken);
+            }
+        }
+        throw new HttpRequestException("暂时无法安全连接 Nearlink 更新服务器。请检查代理是否可访问 charlen.top，然后重试。", lastError);
+    }
+
+    private async Task DownloadAndInstallWindowsUpdateAsync(UpdateManifest release)
     {
         if (!Uri.TryCreate(new Uri("https://charlen.top"), release.DownloadUrl, out var uri) || uri.Scheme != Uri.UriSchemeHttps || uri.Host != "charlen.top")
             throw new InvalidDataException("更新下载地址无效");
         var processPath = Environment.ProcessPath ?? throw new InvalidOperationException("无法定位 Nearlink 程序文件");
-        var installDirectory = Path.GetDirectoryName(processPath)!;
         var updateDirectory = Path.Combine(Path.GetTempPath(), "Nearlink-update-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(updateDirectory);
         try
         {
-            using var downloadClient = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
-            await using (var response = await downloadClient.GetStreamAsync(uri, _stop.Token))
-            await using (var output = File.Create(Path.Combine(updateDirectory, "update.zip")))
-                await response.CopyToAsync(output, _stop.Token);
             var archivePath = Path.Combine(updateDirectory, "update.zip");
+            await DownloadWindowsUpdateArchiveAsync(uri, archivePath, _stop.Token);
             await using (var archive = File.OpenRead(archivePath))
             {
                 var actualHash = Convert.ToHexString(await SHA256.HashDataAsync(archive, _stop.Token));
@@ -327,6 +372,35 @@ public sealed partial class MainWindow : Window
             try { Directory.Delete(updateDirectory, recursive: true); } catch { }
             throw;
         }
+    }
+
+    private async Task DownloadWindowsUpdateArchiveAsync(Uri uri, string archivePath, CancellationToken cancellationToken)
+    {
+        Exception? lastError = null;
+        var partialPath = archivePath + ".partial";
+        foreach (var route in UpdateConnectionRoutes)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                using var client = CreateUpdateHttpClient(route, TimeSpan.FromMinutes(10));
+                using var response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                response.EnsureSuccessStatusCode();
+                await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
+                await using (var output = new FileStream(partialPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true))
+                    await input.CopyToAsync(output, cancellationToken);
+                File.Move(partialPath, archivePath, overwrite: true);
+                return;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException)
+            {
+                lastError = ex;
+                try { File.Delete(partialPath); } catch { }
+                await Task.Delay(250, cancellationToken);
+            }
+        }
+        throw new HttpRequestException("更新包无法稳定下载。请检查代理连接后重试。", lastError);
     }
 
     private static string EscapePowerShell(string value) => value.Replace("'", "''", StringComparison.Ordinal);
